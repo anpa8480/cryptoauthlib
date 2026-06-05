@@ -995,8 +995,12 @@ const pkcs11_attrib_model pkcs11_key_secret_attributes[] = {
     { CKA_DESTROYABLE,        pkcs11_object_get_destroyable                                     },
     /** Type of key */
     { CKA_KEY_TYPE,           pkcs11_object_get_type                                            },
-    /** Key identifier for key (default empty) */
-    { CKA_ID,                 pkcs11_attrib_empty                                               },
+    /** Key identifier for key — UUID v5 derived from device slot number */
+    { CKA_ID,                 pkcs11_object_get_id                                              },
+    /** Vendor: AUTOSAR CryptoKeySlot identifier string (e.g. "CryptoKeySlot_9") */
+    { CKA_KEY_SLOT,           pkcs11_object_get_key_slot                                        },
+    /** Vendor: object schema version, reserved for future use */
+    { CKA_OBJECT_VERSION,     pkcs11_object_get_version                                         },
     /** Start date for the key (default empty) */
     { CKA_START_DATE,         pkcs11_attrib_empty                                               },
     /** End date for the key (default empty) */
@@ -1059,6 +1063,7 @@ const pkcs11_attrib_model pkcs11_key_secret_attributes[] = {
 };
 
 const CK_ULONG pkcs11_key_secret_attributes_count = (CK_ULONG)(PKCS11_UTIL_ARRAY_SIZE(pkcs11_key_secret_attributes));
+
 
 #if ATCA_CA_SUPPORT
 static CK_RV pkcs11_key_privwrite_ca(CK_VOID_PTR pSession, pkcs11_object_ptr pObject, CK_VOID_PTR pValue, CK_ULONG ulValueLen)

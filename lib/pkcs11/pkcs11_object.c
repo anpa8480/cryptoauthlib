@@ -40,6 +40,23 @@
 #include "pkcs11_key.h"
 #include "pkcs11_cert.h"
 
+#include <stdio.h>
+#include <string.h>
+#include "crypto/atca_crypto_sw_sha2.h"
+
+/**
+ * \brief CKA_ID namespace UUID for deterministic UUID v5 generation.
+ *
+ * We use SHA-256 (always available) then truncate to 16 bytes and stamp
+ * UUID v5 version + variant bits.  The namespace is IETF "URL" UUID.
+ *
+ * Namespace: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+ */
+static const uint8_t pkcs11_uuid_namespace[16] = {
+    0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1,
+    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8
+};
+
 /**
  * \defgroup pkcs11 Object (pkcs11_object_)
    @{ */
@@ -305,6 +322,57 @@ CK_RV pkcs11_object_get_owner(pkcs11_object_ptr pObject, CK_SLOT_ID_PTR pSlotId)
     return rv;
 }
 
+/**
+ * \brief Get CKA_ID — deterministic UUID v5 from device slot number.
+ *
+ * Computes UUID v5 = SHA-1(namespace || "CryptoKeySlot_<N>"), then sets
+ * the version (0101) and variant (10) bits per RFC 4122.  The result
+ * is returned as a 16-byte binary UUID.
+ *
+ * This gives every slot a stable, globally unique CKA_ID that is
+ * compatible with Adaptive AUTOSAR CryptoKeySlot identifiers.
+ */
+CK_RV pkcs11_object_get_id(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession)
+{
+    ((void)pSession);
+
+    pkcs11_object_ptr obj_ptr = (pkcs11_object_ptr)pObject;
+
+    if (NULL == obj_ptr)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    /* Build the name string: "CryptoKeySlot_<slot>" */
+    char name[PKCS11_MAX_KEY_SLOT_STR];
+    int nlen = snprintf(name, sizeof(name), "CryptoKeySlot_%u", (unsigned)obj_ptr->slot);
+
+    if (nlen < 0 || (size_t)nlen >= sizeof(name))
+    {
+        return CKR_FUNCTION_FAILED;
+    }
+
+    /* SHA-256(namespace || name) → 32 bytes, truncated to 16 for UUID */
+    uint8_t hash[ATCA_SHA2_256_DIGEST_SIZE];
+    uint8_t msg[16 + PKCS11_MAX_KEY_SLOT_STR];
+
+    (void)memcpy(msg, pkcs11_uuid_namespace, 16);
+    (void)memcpy(msg + 16, name, (size_t)nlen);
+
+    ATCA_STATUS status = atcac_sw_sha2_256(msg, (size_t)(16 + nlen), hash);
+
+    if (ATCA_SUCCESS != status)
+    {
+        return CKR_FUNCTION_FAILED;
+    }
+
+    /* Stamp UUID v5 version + RFC 4122 variant onto first 16 bytes */
+    hash[6] = (uint8_t)((hash[6] & 0x0Fu) | 0x50u);   /* version 5 */
+    hash[8] = (uint8_t)((hash[8] & 0x3Fu) | 0x80u);   /* variant 10 */
+
+    return pkcs11_attrib_fill(pAttribute, hash, 16u);
+}
+
 CK_RV pkcs11_object_get_name(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession)
 {
     ((void)pSession);
@@ -365,6 +433,47 @@ CK_RV pkcs11_object_get_destroyable(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttri
     {
         return pkcs11_attrib_false(pObject, pAttribute, NULL);
     }
+}
+
+/**
+ * \brief Get CKA_KEY_SLOT — vendor-defined string "CryptoKeySlot_<N>"
+ *
+ * Returns the ATECC608 device slot number as an AUTOSAR-style
+ * CryptoKeySlot identifier string (e.g. "CryptoKeySlot_9").
+ */
+CK_RV pkcs11_object_get_key_slot(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession)
+{
+    ((void)pSession);
+
+    pkcs11_object_ptr obj_ptr = (pkcs11_object_ptr)pObject;
+
+    if (NULL == obj_ptr)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    char buf[PKCS11_MAX_KEY_SLOT_STR];
+    int len = snprintf(buf, sizeof(buf), "CryptoKeySlot_%u", (unsigned)obj_ptr->slot);
+
+    if (len < 0 || (size_t)len >= sizeof(buf))
+    {
+        return CKR_FUNCTION_FAILED;
+    }
+
+    return pkcs11_attrib_fill(pAttribute, buf, (CK_ULONG)len);
+}
+
+/**
+ * \brief Get CKA_OBJECT_VERSION — reserved for future use, returns "1.0.0"
+ */
+CK_RV pkcs11_object_get_version(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession)
+{
+    ((void)pSession);
+    ((void)pObject);
+
+    static const char version[] = "1.0.0";
+
+    return pkcs11_attrib_fill(pAttribute, version, (CK_ULONG)(sizeof(version) - 1u));
 }
 
 CK_RV pkcs11_object_get_size(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)

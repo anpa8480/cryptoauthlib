@@ -84,6 +84,14 @@ extern const CK_ULONG pkcs11_object_monotonic_attributes_count;
 #define PKCS11_OBJECT_FLAG_KEY_CACHE_COMPLEMENT    ~(PKCS11_OBJECT_FLAG_KEY_CACHE & 0xffu)
 #define PKCS11_OBJECT_FLAG_CERT_CACHE_COMPLEMENT   ~(PKCS11_OBJECT_FLAG_CERT_CACHE & 0xffu)
 
+/** Vendor-defined PKCS#11 attributes for AUTOSAR Adaptive / multi-purpose crypto stack.
+ *  See design document section 6.5.1. */
+#define CKA_KEY_SLOT            (CKA_VENDOR_DEFINED | 0x0100UL)  /* NOLINT */
+#define CKA_OBJECT_VERSION      (CKA_VENDOR_DEFINED | 0x0200UL)  /* NOLINT */
+
+/** Maximum length of the CKA_KEY_SLOT string (e.g. "CryptoKeySlot_15") */
+#define PKCS11_MAX_KEY_SLOT_STR  24
+
 /* Object System Access */
 CK_RV pkcs11_object_alloc(CK_SLOT_ID slotId, pkcs11_object_ptr * ppObject);
 CK_RV pkcs11_object_free(pkcs11_object_ptr pObject);
@@ -97,8 +105,11 @@ CK_RV pkcs11_object_get_owner(pkcs11_object_ptr pObject, CK_SLOT_ID_PTR pSlotId)
 /* Object Attributes */
 CK_RV pkcs11_object_get_class(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
 CK_RV pkcs11_object_get_name(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
+CK_RV pkcs11_object_get_id(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
 CK_RV pkcs11_object_get_type(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
 CK_RV pkcs11_object_get_destroyable(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
+CK_RV pkcs11_object_get_key_slot(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
+CK_RV pkcs11_object_get_version(CK_VOID_PTR pObject, CK_ATTRIBUTE_PTR pAttribute, pkcs11_session_ctx_ptr pSession);
 CK_RV pkcs11_object_get_size(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize);
 CK_RV pkcs11_object_get_handle(pkcs11_object_ptr pObject, CK_OBJECT_HANDLE_PTR phObject);
 
