@@ -684,8 +684,9 @@ static CK_RV pkcs11_config_parse_object(pkcs11_slot_ctx_ptr slot_ctx, char* cfgs
         if ((CKR_OK == rv) && (NULL != pObject))
         {
             uint8_t keylen = 32;
+            uint8_t key_block = 0;
 
-            if (4 == argc)
+            if (argc >= 4)
             {
                 errno = 0;
                 l_tmp = strtol(argv[3], NULL, 10);
@@ -697,6 +698,22 @@ static CK_RV pkcs11_config_parse_object(pkcs11_slot_ctx_ptr slot_ctx, char* cfgs
                 else
                 {
                     keylen = (uint8_t)l_tmp;
+                }
+            }
+
+            /* Optional key_block for AES operations: secret,label,slot,keylen,keyblock */
+            if (argc >= 5)
+            {
+                errno = 0;
+                l_tmp = strtol(argv[4], NULL, 10);
+
+                if ((0 != errno) || (l_tmp < 0) || (l_tmp > 1))
+                {
+                    rv = CKR_GENERAL_ERROR;
+                }
+                else
+                {
+                    key_block = (uint8_t)l_tmp;
                 }
             }
             pkcs11_config_init_secret(pObject, argv[1], strlen(argv[1]), keylen);
@@ -711,6 +728,7 @@ static CK_RV pkcs11_config_parse_object(pkcs11_slot_ctx_ptr slot_ctx, char* cfgs
             else
             {
                 pObject->slot = (uint16_t)l_tmp;
+                pObject->key_block = key_block;
             }
 
             pObject->flags = 0;

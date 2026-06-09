@@ -186,6 +186,7 @@ CK_RV pkcs11_signature_sign_init(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pM
         {
             pSession->active_object = hKey;
             pSession->active_mech = pMechanism->mechanism;
+            pSession->active_mech_data.hw_hmac_initialized = CK_FALSE;
         }
     }
     else
@@ -300,27 +301,164 @@ CK_RV pkcs11_signature_sign(
 }
 
 /**
- * \brief Continues a multiple-part signature operation
+ * \brief Continues a multiple-part signature operation (C_SignUpdate)
+ * Supports CKM_SHA256_HMAC using hardware HMAC on ATECC608B.
  */
 CK_RV pkcs11_signature_sign_continue(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
-    ((void)hSession);
-    ((void)pPart);
-    ((void)ulPartLen);
+    pkcs11_lib_ctx_ptr pLibCtx = NULL;
+    pkcs11_session_ctx_ptr pSession;
+    pkcs11_object_ptr pKey;
+    CK_RV rv;
 
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    if (NULL == pPart || 0u == ulPartLen)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    rv = pkcs11_init_check(&pLibCtx, FALSE);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    rv = pkcs11_session_check(&pSession, hSession);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    if (CKM_SHA256_HMAC != pSession->active_mech)
+    {
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
+    rv = pkcs11_object_check(&pKey, pSession->active_object);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
+    {
+        if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
+        {
+            ATCA_STATUS status = ATCA_SUCCESS;
+
+            if (CK_FALSE == pSession->active_mech_data.hw_hmac_initialized)
+            {
+                status = calib_sha_hmac_init(pSession->slot->device_ctx,
+                    &pSession->active_mech_data.hw_hmac, pKey->slot);
+                if (ATCA_SUCCESS == status)
+                {
+                    pSession->active_mech_data.hw_hmac_initialized = CK_TRUE;
+                }
+            }
+
+            if (ATCA_SUCCESS == status)
+            {
+                status = calib_sha_hmac_update(pSession->slot->device_ctx,
+                    &pSession->active_mech_data.hw_hmac, pPart, (size_t)ulPartLen);
+            }
+            rv = pkcs11_util_convert_rv(status);
+            (void)pkcs11_unlock_device(pLibCtx);
+        }
+        (void)pkcs11_unlock_context(pLibCtx);
+    }
+
+    if (CKR_OK != rv)
+    {
+        pSession->active_mech = CKM_VENDOR_DEFINED;
+        pSession->active_mech_data.hw_hmac_initialized = CK_FALSE;
+    }
+
+    return rv;
 }
 
 /**
- * \brief Finishes a multiple-part signature operation
+ * \brief Finishes a multiple-part signature operation (C_SignFinal)
+ * Completes HMAC-SHA256 computation and returns the 32-byte MAC.
  */
 CK_RV pkcs11_signature_sign_finish(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-    ((void)hSession);
-    ((void)pSignature);
-    ((void)pulSignatureLen);
+    pkcs11_lib_ctx_ptr pLibCtx = NULL;
+    pkcs11_session_ctx_ptr pSession;
+    pkcs11_object_ptr pKey;
+    CK_RV rv;
 
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    if (NULL == pulSignatureLen)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    rv = pkcs11_init_check(&pLibCtx, FALSE);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    rv = pkcs11_session_check(&pSession, hSession);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    if (CKM_SHA256_HMAC != pSession->active_mech)
+    {
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
+    rv = pkcs11_object_check(&pKey, pSession->active_object);
+    if (CKR_OK != rv)
+    {
+        return rv;
+    }
+
+    /* PKCS#11 spec: if pSignature is NULL, return required buffer size */
+    if (NULL == pSignature)
+    {
+        *pulSignatureLen = ATCA_SHA256_DIGEST_SIZE;
+        return CKR_OK;
+    }
+
+    if (*pulSignatureLen < ATCA_SHA256_DIGEST_SIZE)
+    {
+        *pulSignatureLen = ATCA_SHA256_DIGEST_SIZE;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
+    {
+        if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
+        {
+            ATCA_STATUS status = ATCA_SUCCESS;
+
+            if (CK_FALSE == pSession->active_mech_data.hw_hmac_initialized)
+            {
+                status = calib_sha_hmac_init(pSession->slot->device_ctx,
+                    &pSession->active_mech_data.hw_hmac, pKey->slot);
+                if (ATCA_SUCCESS == status)
+                {
+                    pSession->active_mech_data.hw_hmac_initialized = CK_TRUE;
+                }
+            }
+
+            if (ATCA_SUCCESS == status)
+            {
+                status = calib_sha_hmac_finish(pSession->slot->device_ctx,
+                    &pSession->active_mech_data.hw_hmac, pSignature, SHA_MODE_TARGET_OUT_ONLY);
+            }
+            rv = pkcs11_util_convert_rv(status);
+            (void)pkcs11_unlock_device(pLibCtx);
+        }
+        (void)pkcs11_unlock_context(pLibCtx);
+    }
+
+    *pulSignatureLen = ATCA_SHA256_DIGEST_SIZE;
+    pSession->active_mech = CKM_VENDOR_DEFINED;
+    pSession->active_mech_data.hw_hmac_initialized = CK_FALSE;
+
+    return rv;
 }
 
 /**

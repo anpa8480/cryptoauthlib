@@ -50,6 +50,7 @@ typedef struct pkcs11_object_s
     CK_ULONG    count;
     CK_ULONG    size;
     uint16_t    slot;
+    uint8_t     key_block;
     CK_FLAGS    flags;
     CK_UTF8CHAR name[PKCS11_MAX_LABEL_SIZE + 1];
 #if ATCA_CA_SUPPORT

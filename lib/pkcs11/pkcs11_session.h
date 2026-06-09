@@ -31,6 +31,7 @@
 #include "cryptoki.h"
 #include "pkcs11_config.h"
 #include "cal_internal.h"
+#include "calib/calib_basic.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +58,8 @@ typedef struct pkcs11_session_mech_ctx_s
 #endif
     atca_aes_cmac_ctx_t cmac;
     atca_aes_cbc_ctx_t  cbc;
+    atca_hmac_sha256_ctx_t hw_hmac;  /* Hardware HMAC context for multi-part C_SignUpdate/C_SignFinal */
+    CK_BBOOL hw_hmac_initialized;
 #ifdef ATCA_ATECC608_SUPPORT
     struct
     {

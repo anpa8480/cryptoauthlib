@@ -92,10 +92,10 @@ CK_RV pkcs11_encrypt_init(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
                 rv = CKR_OK;
                 break;
             case CKM_AES_CBC_PAD:
-                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, 0, (uint8_t*)pMechanism->pParameter, 1));
+                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, pObject->key_block, (uint8_t*)pMechanism->pParameter, 1));
                 break;
             case CKM_AES_CBC:
-                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, 0, (uint8_t*)pMechanism->pParameter, 0));
+                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, pObject->key_block, (uint8_t*)pMechanism->pParameter, 0));
                 break;
             case CKM_AES_GCM:
                 if ((NULL != pMechanism->pParameter) && sizeof(CK_GCM_PARAMS) == pMechanism->ulParameterLen)
@@ -112,7 +112,7 @@ CK_RV pkcs11_encrypt_init(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
                             if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                             {
                                 if (CKR_OK == (rv = pkcs11_util_convert_rv(atcab_aes_gcm_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.gcm.context,
-                                                                                                  pObject->slot, 0, pParams->pIv, pParams->ulIvLen))))
+                                                                                                  pObject->slot, pObject->key_block, pParams->pIv, pParams->ulIvLen))))
                                 {
                                     /* coverity[misra_c_2012_rule_10_1_violation] False positive - coverity bug with stdint.h definitions */
                                     rv = pkcs11_util_convert_rv(atcab_aes_gcm_aad_update_ext(pSession->slot->device_ctx, &pSession->active_mech_data.gcm.context, pParams->pAAD, (uint32_t)(pParams->ulAADLen) & UINT32_MAX));
@@ -176,7 +176,7 @@ CK_RV pkcs11_encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulD
         return rv;
     }
 
-    if (NULL == pData || 0u == ulDataLen || NULL == pEncryptedData || NULL == pulEncryptedDataLen)
+    if (NULL == pData || 0u == ulDataLen || NULL == pulEncryptedDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -187,10 +187,44 @@ CK_RV pkcs11_encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulD
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pEncryptedData is NULL, return required output size */
+    if (NULL == pEncryptedData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+            *pulEncryptedDataLen = ATCA_AES128_BLOCK_SIZE;
+            break;
+        case CKM_AES_CBC:
+            *pulEncryptedDataLen = ulDataLen;
+            break;
+        case CKM_AES_CBC_PAD:
+            *pulEncryptedDataLen = ulDataLen + ATCA_AES128_BLOCK_SIZE;
+            break;
+        case CKM_AES_GCM:
+            *pulEncryptedDataLen = ulDataLen + pSession->active_mech_data.gcm.tag_len;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
 
     /* need lock both for encrypt*/
@@ -203,7 +237,7 @@ CK_RV pkcs11_encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulD
             {
                 if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                 {
-                    status = atcab_aes_encrypt_ext(pSession->slot->device_ctx, pKey->slot, 0, pData, pEncryptedData);
+                    status = atcab_aes_encrypt_ext(pSession->slot->device_ctx, pKey->slot, pKey->key_block, pData, pEncryptedData);
                     (void)pkcs11_unlock_device(pLibCtx);
                 }
                 *pulEncryptedDataLen = ATCA_AES128_BLOCK_SIZE;
@@ -298,7 +332,7 @@ CK_RV pkcs11_encrypt_update(
         return rv;
     }
 
-    if (NULL == pData || 0u == ulDataLen || NULL == pEncryptedData || NULL == pulEncryptedDataLen)
+    if (NULL == pData || 0u == ulDataLen || NULL == pulEncryptedDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -309,10 +343,40 @@ CK_RV pkcs11_encrypt_update(
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pEncryptedData is NULL, return required output size */
+    if (NULL == pEncryptedData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+        case CKM_AES_CBC:
+        case CKM_AES_GCM:
+            *pulEncryptedDataLen = ulDataLen;
+            break;
+        case CKM_AES_CBC_PAD:
+            *pulEncryptedDataLen = ulDataLen + ATCA_AES128_BLOCK_SIZE;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
 
     /* need lock both for encrypt update*/
@@ -325,7 +389,7 @@ CK_RV pkcs11_encrypt_update(
             {
                 if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                 {
-                    status = atcab_aes_encrypt_ext(pSession->slot->device_ctx, pKey->slot, 0, pData, pEncryptedData);
+                    status = atcab_aes_encrypt_ext(pSession->slot->device_ctx, pKey->slot, pKey->key_block, pData, pEncryptedData);
                     (void)pkcs11_unlock_device(pLibCtx);
                 }
                 *pulEncryptedDataLen = ATCA_AES128_BLOCK_SIZE;
@@ -394,7 +458,7 @@ CK_RV pkcs11_encrypt_final(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedDat
         return rv;
     }
 
-    if (NULL == pEncryptedData || NULL == pulEncryptedDataLen)
+    if (NULL == pulEncryptedDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -405,10 +469,42 @@ CK_RV pkcs11_encrypt_final(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedDat
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pEncryptedData is NULL, return required output size */
+    if (NULL == pEncryptedData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+        case CKM_AES_CBC:
+            *pulEncryptedDataLen = 0u;
+            break;
+        case CKM_AES_CBC_PAD:
+            *pulEncryptedDataLen = ATCA_AES128_BLOCK_SIZE;
+            break;
+        case CKM_AES_GCM:
+            *pulEncryptedDataLen = pSession->active_mech_data.gcm.tag_len;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
     /* need lock both for encrypt final*/
     if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
@@ -511,10 +607,10 @@ CK_RV pkcs11_decrypt_init(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
                 rv = CKR_OK;
                 break;
             case CKM_AES_CBC_PAD:
-                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, 0, (uint8_t*)pMechanism->pParameter, 1));
+                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, pObject->key_block, (uint8_t*)pMechanism->pParameter, 1));
                 break;
             case CKM_AES_CBC:
-                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, 0, (uint8_t*)pMechanism->pParameter, 0));
+                rv = pkcs11_util_convert_rv(atcab_aes_cbc_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.cbc, pObject->slot, pObject->key_block, (uint8_t*)pMechanism->pParameter, 0));
                 break;
             case CKM_AES_GCM:
                 if ((NULL != pMechanism->pParameter) && sizeof(CK_GCM_PARAMS) == pMechanism->ulParameterLen)
@@ -533,7 +629,7 @@ CK_RV pkcs11_decrypt_init(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
                             if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                             {
                                 if (CKR_OK == (rv = pkcs11_util_convert_rv(atcab_aes_gcm_init_ext(pSession->slot->device_ctx, &pSession->active_mech_data.gcm.context,
-                                                                                                  pObject->slot, 0, pParams->pIv, pParams->ulIvLen))))
+                                                                                                  pObject->slot, pObject->key_block, pParams->pIv, pParams->ulIvLen))))
                                 {
                                     rv = pkcs11_util_convert_rv(atcab_aes_gcm_aad_update_ext(pSession->slot->device_ctx, &pSession->active_mech_data.gcm.context, pParams->pAAD, (uint32_t)(pParams->ulAADLen)));
                                 }
@@ -600,7 +696,7 @@ CK_RV pkcs11_decrypt(
         return rv;
     }
 
-    if (NULL == pEncryptedData || 0u == ulEncryptedDataLen || NULL == pData || NULL == pulDataLen)
+    if (NULL == pEncryptedData || 0u == ulEncryptedDataLen || NULL == pulDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -617,10 +713,44 @@ CK_RV pkcs11_decrypt(
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pData is NULL, return required output size */
+    if (NULL == pData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+        case CKM_AES_CBC:
+        case CKM_AES_CBC_PAD:
+            *pulDataLen = ulEncryptedDataLen;
+            break;
+        case CKM_AES_GCM:
+            if (ulEncryptedDataLen < pSession->active_mech_data.gcm.tag_len)
+            {
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
+            *pulDataLen = ulEncryptedDataLen - pSession->active_mech_data.gcm.tag_len;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
 
     if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
@@ -632,7 +762,7 @@ CK_RV pkcs11_decrypt(
             {
                 if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                 {
-                    status = atcab_aes_decrypt_ext(pSession->slot->device_ctx, pKey->slot, 0, pEncryptedData, pData);
+                    status = atcab_aes_decrypt_ext(pSession->slot->device_ctx, pKey->slot, pKey->key_block, pEncryptedData, pData);
                     (void)pkcs11_unlock_device(pLibCtx);
                 }
                 *pulDataLen = ATCA_AES128_BLOCK_SIZE;
@@ -727,7 +857,7 @@ CK_RV pkcs11_decrypt_update(
         return rv;
     }
 
-    if (NULL == pEncryptedData || 0u == ulEncryptedDataLen || NULL == pData || NULL == pulDataLen)
+    if (NULL == pEncryptedData || 0u == ulEncryptedDataLen || NULL == pulDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -745,10 +875,40 @@ CK_RV pkcs11_decrypt_update(
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pData is NULL, return required output size */
+    if (NULL == pData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+        case CKM_AES_CBC:
+        case CKM_AES_GCM:
+            *pulDataLen = ulEncryptedDataLen;
+            break;
+        case CKM_AES_CBC_PAD:
+            *pulDataLen = ulEncryptedDataLen + ATCA_AES128_BLOCK_SIZE;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
 
     if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
@@ -760,7 +920,7 @@ CK_RV pkcs11_decrypt_update(
             {
                 if (CKR_OK == (rv = pkcs11_lock_device(pLibCtx)))
                 {
-                    status = atcab_aes_decrypt_ext(pSession->slot->device_ctx, pKey->slot, 0, pEncryptedData, pData);
+                    status = atcab_aes_decrypt_ext(pSession->slot->device_ctx, pKey->slot, pKey->key_block, pEncryptedData, pData);
                     (void)pkcs11_unlock_device(pLibCtx);
                 }
                 *pulDataLen = ATCA_AES128_BLOCK_SIZE;
@@ -828,7 +988,7 @@ CK_RV pkcs11_decrypt_final(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULO
         return rv;
     }
 
-    if (NULL == pData || NULL == pulDataLen)
+    if (NULL == pulDataLen)
     {
         return CKR_ARGUMENTS_BAD;
     }
@@ -839,10 +999,38 @@ CK_RV pkcs11_decrypt_final(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULO
         return rv;
     }
 
+    switch (pSession->active_mech)
+    {
+    case CKM_AES_ECB:
+    case CKM_AES_CBC:
+    case CKM_AES_CBC_PAD:
+    case CKM_AES_GCM:
+        break;
+    default:
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
     rv = pkcs11_object_check(&pKey, pSession->active_object);
     if (CKR_OK != rv)
     {
         return rv;
+    }
+
+    /* PKCS#11 spec: if pData is NULL, return required output size */
+    if (NULL == pData)
+    {
+        switch (pSession->active_mech)
+        {
+        case CKM_AES_ECB:
+        case CKM_AES_CBC:
+        case CKM_AES_CBC_PAD:
+        case CKM_AES_GCM:
+            *pulDataLen = 0u;
+            break;
+        default:
+            return CKR_OPERATION_NOT_INITIALIZED;
+        }
+        return CKR_OK;
     }
 
     if (CKR_OK == (rv = pkcs11_lock_context(pLibCtx)))
